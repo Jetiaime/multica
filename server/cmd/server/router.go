@@ -835,6 +835,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Post("/tasks/{taskId}/events", h.RecordDaemonTaskObservation)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 
 		r.Post("/workspaces/{workspaceId}/issues/gc-check", h.BatchIssueGCCheck)
@@ -1132,6 +1133,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/events", h.ListTaskEventsByUser)
+			r.Get("/api/tasks/{taskId}/status", h.GetTaskRunStatusByUser)
+			r.Post("/api/tasks/{taskId}/events", h.RecordTaskObservation)
 
 			// Custom issue properties (definitions; values live under /api/issues/{id}/properties)
 			r.Route("/api/properties", func(r chi.Router) {

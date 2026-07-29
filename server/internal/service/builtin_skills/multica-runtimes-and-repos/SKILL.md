@@ -39,11 +39,43 @@ The chain is:
 multica runtime list --output json
 multica runtime usage <runtime-id> --output json
 multica runtime activity <runtime-id> --output json
+multica task status <task-id> --output json
+multica task events <task-id> --output json
 multica runtime update <runtime-id> --target-version <version> --output json
 multica runtime delete <runtime-id>
 multica repo checkout <url>
 multica repo checkout <url> --ref <branch-or-sha>
 ```
+
+`task status` is the read-only reconciliation view. Read its conditions
+independently: `RunActive`, `RuntimeAlive`, `ProviderAlive`, `SlotHeld`, and
+`Stalled` are not interchangeable. `Unknown` means the durable evidence is
+insufficient; it is not equivalent to `False`, does not prove a dead provider
+or a released slot, and must not trigger an automatic rerun.
+
+`task events` returns the append-only evidence ordered by per-task sequence.
+`server.task_queue` is authoritative for queue state. Only `daemon://...`
+events prove provider and slot lifecycle. `task-token://...` events are useful
+for diagnostics, but the spawned agent also holds that token, so status does
+not trust them as process or capacity evidence. `history_complete: false`
+means the task predates ledger capture or its initial server event is missing;
+do not infer the missing prefix.
+
+Task-scoped wrappers may append low-frequency, non-secret observations with a
+stable idempotency key:
+
+```bash
+multica task event add "$MULTICA_TASK_ID" \
+  --id <stable-id> \
+  --type journal.delivery_acked \
+  --component journal \
+  --time <rfc3339-time> \
+  --data '{"checkpoint_id":"..."}'
+```
+
+Retry the same occurrence with the same `--id` and unchanged event fields.
+Reusing an id for a different event is rejected. Do not publish heartbeats or
+progress ticks into the ledger.
 
 `runtime update` and `runtime delete` are writes. Starting a runtime update is limited to its owner or a workspace owner/admin; the original initiator may keep polling that specific in-flight request if their admin role changes. `runtime delete` removes a runtime registration; if active agents are still bound, it refuses unless the user explicitly passes `--cascade`, which archives those agents and cancels their queued/running tasks before deleting the runtime. `repo checkout` creates a dedicated branch in the task working directory. Most runtimes use a linked worktree; Linux Codex uses task-local Git metadata so its `workspace-write` sandbox can stage and commit without making the shared `.repos` cache writable.
 
@@ -58,8 +90,12 @@ Check in this order:
 3. Is the agent archived or bound to a runtime the actor cannot use?
 4. Is the runtime online? `multica runtime list --output json`.
 5. Did the daemon heartbeat recently? Runtime `last_seen_at` is the visible clue.
-6. Did the task get claimed or is it stuck pending/running/waiting for local directory?
-7. If repo checkout failed, classify it after checking whether repo context was
+6. What does `multica task status <task-id> --output json` prove, and which
+   conditions remain `Unknown`?
+7. Does `multica task events <task-id> --output json` contain an authoritative
+   provider exit or slot release, or only task-token observations?
+8. Did the task get claimed or is it stuck pending/running/waiting for local directory?
+9. If repo checkout failed, classify it after checking whether repo context was
    present in the task/project context.
 
 ## Repos

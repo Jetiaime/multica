@@ -1,6 +1,9 @@
 # Runtimes and repos source map
 
 - `server/cmd/multica/cmd_runtime.go` registers `runtime list`, `usage`, `activity`, `update`, and `delete`.
+- `server/cmd/multica/cmd_task_event.go` registers `task events`, `task status`, and task-token `task event add`.
+- `server/internal/handler/task_events.go` enforces workspace/task-token or daemon authorization, appends allow-listed lifecycle observations, and projects `RunActive`, `RuntimeAlive`, `ProviderAlive`, `SlotHeld`, and `Stalled`. Only `daemon://` events are authoritative for provider and slot liveness.
+- `server/pkg/db/queries/task_event.sql` and migrations `233`-`238` implement the append-only task event history, source-scoped idempotency, per-task sequence, and transactional task-status capture. `agent_task_queue` remains the current-state authority.
 - `runtime list` reads `/api/runtimes` and prints `id`, `name`, `runtime_mode`, `provider`, `status`, and `last_seen_at`.
 - `runtime update` posts to `/api/runtimes/{runtime-id}/update`; with `--wait` it polls update status. Initiation enforces runtime-owner or workspace-owner/admin access through `canEditRuntime`; status polling additionally permits that request's immutable initiator so an in-flight poll survives an admin-role change (`server/internal/handler/runtime_update.go` and `runtime.go`).
 - `runtime delete` deletes `/api/runtimes/{runtime-id}`; with `--cascade`, it first reads the `runtime_has_active_agents` conflict payload and posts those ids to `/api/runtimes/{runtime-id}/archive-agents-and-delete`.
@@ -10,5 +13,5 @@
 - `server/internal/daemon/daemon.go` injects `MULTICA_REPO_CHECKOUT_MODE=isolated` only for Linux Codex tasks. `server/internal/daemon/repocache/cache.go` implements that mode as a same-filesystem local clone with task-local Git metadata and the real repository as `origin`; other runtimes keep the linked-worktree path.
 - When the bare cache is a partial clone, that isolated checkout must have `remote.origin.promisor` / `partialclonefilter` restored before its first `checkout`: `git clone --local` neither inherits them nor errors on the missing objects it leaves behind, so the checkout would otherwise succeed with an empty working tree. The linked-worktree path shares the cache's own config and needs no such repair.
 - `server/cmd/server/router.go` registers daemon APIs under `/api/daemon`, including workspace repos and task claim.
-- `server/internal/daemon/daemon.go` claims tasks, prepares workdirs, launches provider CLIs, and reports completion.
+- `server/internal/daemon/daemon.go` claims tasks, prepares workdirs, launches provider CLIs, reports completion, and emits authoritative provider/wrapper/slot lifecycle observations. Provider exit is emitted only from a provider result; slot release is emitted only after local capacity is returned.
 - `server/internal/daemon/execenv/runtime_config.go` injects task/project/repo context into agent workdirs.

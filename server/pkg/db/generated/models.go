@@ -91,6 +91,22 @@ type AgentSkill struct {
 	Enabled   bool               `json:"enabled"`
 }
 
+type AgentTaskEvent struct {
+	ID            pgtype.UUID        `json:"id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	Sequence      int64              `json:"sequence"`
+	EventType     string             `json:"event_type"`
+	Source        string             `json:"source"`
+	SourceEventID pgtype.Text        `json:"source_event_id"`
+	OccurredAt    pgtype.Timestamptz `json:"occurred_at"`
+	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
+	SchemaVersion int32              `json:"schema_version"`
+	Data          []byte             `json:"data"`
+}
+
 type AgentTaskQueue struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AgentID               pgtype.UUID        `json:"agent_id"`

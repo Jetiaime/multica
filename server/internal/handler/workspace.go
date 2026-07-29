@@ -789,6 +789,12 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := qtx.DeleteAgentTaskEventsByWorkspace(r.Context(), requester.WorkspaceID); err != nil {
+		slog.Warn("delete workspace task events failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to delete workspace")
+		return
+	}
+
 	// At this point workspaceMember has resolved → workspaceID is a valid UUID
 	// (the lookup would have errored otherwise), so reuse the resolved value.
 	if err := qtx.DeleteWorkspace(r.Context(), requester.WorkspaceID); err != nil {

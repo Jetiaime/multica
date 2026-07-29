@@ -3201,15 +3201,33 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			go func(t Task, slot int) {
 				defer taskWG.Done()
 				defer d.activeTasks.Add(-1)
+				slotAcquiredAt := time.Now().UTC()
+				slotAcquiredEventID := newTaskObservationID()
+				wrapperExitedEventID := newTaskObservationID()
+				slotReleasedEventID := newTaskObservationID()
 				defer func() {
+					wrapperExitedAt := time.Now().UTC()
 					// Release local capacity before waking the poller. The task's
 					// terminal callback and local cleanup have both finished at this
 					// point, so a successor that was previously blocked by agent
 					// capacity or per-(issue, agent) serialization can be claimed
 					// immediately instead of waiting for PollInterval.
 					sem <- slot
+					slotReleasedAt := time.Now().UTC()
 					signalPollerWakeup(wakeup)
+					taskLog := d.logger.With("task", shortID(t.ID))
+					d.recordTaskObservation(t.ID, wrapperExitedEventID, "wrapper.exited", "wrapper", wrapperExitedAt, nil, taskLog)
+					d.recordTaskObservation(t.ID, slotReleasedEventID, "slot.released", "slot", slotReleasedAt, map[string]any{"slot": slot}, taskLog)
 				}()
+				d.recordTaskObservation(
+					t.ID,
+					slotAcquiredEventID,
+					"slot.acquired",
+					"slot",
+					slotAcquiredAt,
+					map[string]any{"slot": slot},
+					d.logger.With("task", shortID(t.ID)),
+				)
 				d.handleTask(parentCtx, t, slot)
 			}(t, slot)
 			dispatched++
@@ -5713,8 +5731,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		}
 	}
 
+	providerAttemptID := newTaskObservationID()
+	providerStartedAt := time.Now().UTC()
+	d.recordTaskObservation(
+		taskID,
+		providerAttemptID+":started",
+		"provider.started",
+		"provider",
+		providerStartedAt,
+		nil,
+		taskLog,
+	)
+
 	select {
 	case result := <-session.Result:
+		providerExitedAt := time.Now().UTC()
 		waitForDrain()
 		if idleWatchdogFired.Load() {
 			// The backend's wait goroutine (e.g. claude.go) translates the
@@ -5727,6 +5758,15 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
 			}
 		}
+		d.recordTaskObservation(
+			taskID,
+			providerAttemptID+":exited",
+			"provider.exited",
+			"provider",
+			providerExitedAt,
+			map[string]any{"status": result.Status},
+			taskLog,
+		)
 		return result, toolCount.Load(), nil
 	case <-drainCtx.Done():
 		// The drain loop is exiting on this same Done signal; wait for its

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS agent_task_event_task_sequence_uidx;

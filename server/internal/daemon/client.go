@@ -364,6 +364,30 @@ type TaskMessageData struct {
 	Output  string         `json:"output,omitempty"`
 }
 
+type TaskObservation struct {
+	ID            string         `json:"id"`
+	Type          string         `json:"type"`
+	Component     string         `json:"component"`
+	Time          time.Time      `json:"time"`
+	SchemaVersion int32          `json:"schema_version"`
+	Data          map[string]any `json:"data,omitempty"`
+}
+
+var taskObservationRetrySchedule = []time.Duration{
+	100 * time.Millisecond,
+	500 * time.Millisecond,
+}
+
+func (c *Client) RecordTaskObservation(ctx context.Context, taskID string, observation TaskObservation) error {
+	return c.postJSONWithRetry(
+		ctx,
+		fmt.Sprintf("/api/daemon/tasks/%s/events", taskID),
+		observation,
+		nil,
+		taskObservationRetrySchedule,
+	)
+}
+
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
