@@ -291,6 +291,7 @@ export function ActiveTaskRow({
     setCancelling(true);
     try {
       await api.cancelTask(issueId, task.id);
+      toast.success(t(($) => $.execution_log.cancel_success));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.execution_log.cancel_failed));
       setCancelling(false);
