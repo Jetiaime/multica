@@ -41,7 +41,18 @@ vi.mock("../../common/task-transcript", () => ({
 }));
 
 vi.mock("./terminate-task-confirm-dialog", () => ({
-  TerminateTaskConfirmDialog: () => null,
+  TerminateTaskConfirmDialog: ({
+    open,
+    onConfirm,
+  }: {
+    open: boolean;
+    onConfirm: () => void;
+  }) =>
+    open ? (
+      <button type="button" onClick={onConfirm}>
+        Confirm stop
+      </button>
+    ) : null,
 }));
 
 import {
@@ -108,6 +119,22 @@ describe("ExecutionLogSection", () => {
 });
 
 describe("ActiveTaskRow", () => {
+  it("confirms a successful task cancellation", async () => {
+    mockState.cancelTask.mockResolvedValue(undefined);
+    const successToast = vi.spyOn(toast, "success").mockReturnValue("toast-id");
+
+    renderWithI18n(<ActiveTaskRow task={makeTask()} issueId="issue-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel task" }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Confirm stop" }));
+      await Promise.resolve();
+    });
+
+    expect(mockState.cancelTask).toHaveBeenCalledWith("issue-1", "task-1");
+    expect(successToast).toHaveBeenCalledWith("Task cancelled");
+  });
+
   it("renders running status as elapsed time only", () => {
     renderWithI18n(
       <ActiveTaskRow
