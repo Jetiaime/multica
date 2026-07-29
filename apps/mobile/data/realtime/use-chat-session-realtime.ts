@@ -74,20 +74,20 @@ export function useChatSessionRealtime(
         }),
         ws.on("task:cancelled", (payload) => {
           if (!isMine(payload)) return;
-          clearPendingTask(qc, sessionId);
+          clearPendingTask(qc, sessionId, payload.task_id);
         }),
         ws.on("task:completed", (payload) => {
           if (!isMine(payload)) return;
           // `chat:done` already wrote the assistant message and cleared
           // pendingTask. Defensive clear in case the two events arrive
           // out of order on a flaky network.
-          clearPendingTask(qc, sessionId);
+          clearPendingTask(qc, sessionId, payload.task_id);
         }),
         ws.on("task:failed", (payload) => {
           if (!isMine(payload)) return;
           // FailTask persists a destructive assistant message — surface it
           // by refetching messages and clearing the pending pill.
-          clearPendingTask(qc, sessionId);
+          clearPendingTask(qc, sessionId, payload.task_id);
           qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         }),
         ws.on("chat:session_deleted", (payload) => {

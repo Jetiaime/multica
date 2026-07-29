@@ -30,6 +30,11 @@ import type {
   TaskQueuedPayload,
   TaskDispatchPayload,
 } from "@multica/core/types";
+import {
+  enqueuePendingChatTask,
+  promotePendingChatTask,
+  removePendingChatTask,
+} from "@multica/core/chat/pending";
 import { chatKeys } from "@/data/queries/chat";
 
 // =====================================================
@@ -142,9 +147,14 @@ export function applyChatDoneToCache(
   qc.invalidateQueries({
     queryKey: chatKeys.messages(payload.chat_session_id),
   });
-  // Clear in-flight pointer in the same tick so StatusPill unmounts and
-  // the AssistantMessage owns the rendering.
-  qc.setQueryData(chatKeys.pendingTask(payload.chat_session_id), {});
+  // Remove only the finished task; a queued follow-up becomes the next head.
+  qc.setQueryData<ChatPendingTask>(
+    chatKeys.pendingTask(payload.chat_session_id),
+    (old) => removePendingChatTask(old, payload.task_id),
+  );
+  qc.invalidateQueries({
+    queryKey: chatKeys.pendingTask(payload.chat_session_id),
+  });
 }
 
 // =====================================================
@@ -158,10 +168,10 @@ export function seedPendingTaskFromQueued(
   if (!payload.chat_session_id) return;
   qc.setQueryData<ChatPendingTask>(
     chatKeys.pendingTask(payload.chat_session_id),
-    (old) => ({
-      ...(old ?? {}),
+    (old) => enqueuePendingChatTask(old, {
       task_id: payload.task_id,
       status: "queued",
+      created_at: new Date().toISOString(),
     }),
   );
 }
@@ -173,20 +183,20 @@ export function promotePendingTaskToRunning(
   if (!payload.chat_session_id) return;
   qc.setQueryData<ChatPendingTask>(
     chatKeys.pendingTask(payload.chat_session_id),
-    (old) => {
-      // Only upgrade if it's the task we already know about. A stale
-      // dispatch event for a finished task shouldn't reanimate the pill.
-      if (!old || old.task_id !== payload.task_id) return old;
-      return { ...old, status: "running" };
-    },
+    (old) => promotePendingChatTask(old, payload.task_id, "running"),
   );
 }
 
 export function clearPendingTask(
   qc: QueryClient,
   sessionId: string,
+  taskId?: string,
 ) {
-  qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+  qc.setQueryData<ChatPendingTask>(
+    chatKeys.pendingTask(sessionId),
+    (old) => taskId ? removePendingChatTask(old, taskId) : {},
+  );
+  qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
 // =====================================================
