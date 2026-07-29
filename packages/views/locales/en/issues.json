@@ -464,6 +464,7 @@
     "retry_failed": "Failed to retry task",
     "retry_blocked": "Not retried — you don't have permission to use this agent",
     "transcript_tooltip": "View transcript",
+    "cancel_success": "Task cancelled",
     "cancel_failed": "Failed to cancel task",
     "trigger_retry": "Retry",
     "trigger_retry_attempt": "Retry #{{attempt}}",

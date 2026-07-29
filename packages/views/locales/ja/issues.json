@@ -444,6 +444,7 @@
     "retry_failed": "タスクを再試行できませんでした",
     "retry_blocked": "再試行されませんでした — このエージェントを使用する権限がありません",
     "transcript_tooltip": "トランスクリプトを表示",
+    "cancel_success": "タスクをキャンセルしました",
     "cancel_failed": "タスクをキャンセルできませんでした",
     "trigger_retry": "再試行",
     "trigger_retry_attempt": "再試行 #{{attempt}}",
