@@ -110,11 +110,13 @@ interface Props {
    *  flow. Chat doesn't pass it. */
   expandTrigger?: string | null;
 
-  /** When `isSending` is true AND `renderStop` is provided, the trailing
-   *  send button is replaced by whatever `renderStop` returns. Chat uses
-   *  this to show a Stop affordance while the agent is running. */
+  /** When `isSending` is true AND `renderStop` is provided, render the
+   *  caller's Stop affordance. Send is replaced unless
+   *  `allowSubmitWhileSending` is enabled. */
   isSending?: boolean;
   renderStop?: () => ReactNode;
+  /** Keep Send beside Stop so chat can queue a follow-up while work runs. */
+  allowSubmitWhileSending?: boolean;
 
   /** Hard-disable. Used when chat has no usable agent. The pill shows
    *  `disabledReason` instead of `pillLabel`, and the pill is
@@ -168,6 +170,7 @@ export function MessageComposer({
   expandTrigger,
   isSending = false,
   renderStop,
+  allowSubmitWhileSending = false,
   disabled = false,
   disabledReason,
   manageKeyboard = true,
@@ -226,7 +229,7 @@ export function MessageComposer({
   const hasInFlightUpload = attachments.some((a) => a.status === "uploading");
   const canSend =
     !disabled &&
-    !isSending &&
+    (!isSending || allowSubmitWhileSending) &&
     !submitting &&
     !hasInFlightUpload &&
     (text.trim().length > 0 || mentions.length > 0);
@@ -573,9 +576,8 @@ export function MessageComposer({
             className="h-8 w-8"
           />
           <View className="flex-1" />
-          {isSending && renderStop ? (
-            renderStop()
-          ) : (
+          {isSending && renderStop ? renderStop() : null}
+          {!isSending || allowSubmitWhileSending ? (
             <IconButton
               name="arrow-up"
               iconSize={18}
@@ -588,7 +590,7 @@ export function MessageComposer({
               accessibilityLabel="Send"
               accessibilityState={{ disabled: !canSend }}
             />
-          )}
+          ) : null}
         </View>
       </View>
     </View>
