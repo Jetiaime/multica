@@ -97,14 +97,21 @@ function SubmitButton({
       )}
     </Button>
   );
-  const submitControl = !tooltip ? submitButton : (
-    <Tooltip>
-      <TooltipTrigger render={submitButton} />
-      <TooltipContent side="top">{tooltip}</TooltipContent>
-    </Tooltip>
-  );
+  const submitControl = !tooltip
+    ? submitButton
+    : (
+        <Tooltip>
+          <TooltipTrigger render={submitButton} />
+          <TooltipContent side="top">{tooltip}</TooltipContent>
+        </Tooltip>
+      );
   if (!stopControl) return submitControl;
-  return <>{stopControl}{submitControl}</>;
+  return (
+    <>
+      {stopControl}
+      {submitControl}
+    </>
+  );
 }
 
 export { SubmitButton, type SubmitButtonProps };

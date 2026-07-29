@@ -1128,8 +1128,6 @@ export const ChatPendingTaskSchema: z.ZodType<ChatPendingTask> = z.object({
   task_id: z.string().optional(),
   status: z.string().optional(),
   created_at: z.string().optional(),
-  message_id: z.string().optional(),
-  content: z.string().optional(),
   queued_tasks: z.array(ChatQueuedTaskSchema).default([]),
 }).loose();
 

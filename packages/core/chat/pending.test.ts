@@ -3,7 +3,6 @@ import {
   enqueuePendingChatTask,
   promotePendingChatTask,
   removePendingChatTask,
-  replacePendingChatTask,
 } from "./pending";
 
 const task = (task_id: string, created_at: string) => ({
@@ -21,6 +20,35 @@ describe("pending chat queue", () => {
 
     expect(result.task_id).toBe("active");
     expect(result.queued_tasks?.map((item) => item.task_id)).toEqual(["next", "later"]);
+  });
+
+  it("keeps a send response preview when a sparse queued event arrives later", () => {
+    const current = {
+      ...task("active", "2026-01-01T00:00:00Z"),
+      status: "running",
+      queued_tasks: [
+        {
+          ...task("next", "2026-01-01T00:00:01Z"),
+          message_id: "message-next",
+          content: "Keep this visible preview",
+        },
+      ],
+    };
+
+    const result = enqueuePendingChatTask(current, {
+      task_id: "next",
+      status: "queued",
+      created_at: "2026-01-01T00:00:03Z",
+    });
+
+    expect(result.queued_tasks).toEqual([
+      expect.objectContaining({
+        task_id: "next",
+        created_at: "2026-01-01T00:00:01Z",
+        message_id: "message-next",
+        content: "Keep this visible preview",
+      }),
+    ]);
   });
 
   it("promotes a queued task without losing later work", () => {
@@ -75,32 +103,5 @@ describe("pending chat queue", () => {
     const result = removePendingChatTask(current, "active");
     expect(result.task_id).toBe("next");
     expect(result.queued_tasks?.map((item) => item.task_id)).toEqual(["later"]);
-  });
-
-  it("replaces an optimistic task id in place", () => {
-    const current = {
-      ...task("active", "2026-01-01T00:00:00Z"),
-      status: "running",
-      queued_tasks: [task("optimistic", "2026-01-01T00:00:01Z")],
-    };
-    const result = replacePendingChatTask(
-      current,
-      "optimistic",
-      task("server", "2026-01-01T00:00:01Z"),
-    );
-    expect(result.queued_tasks?.map((item) => item.task_id)).toEqual(["server"]);
-  });
-
-  it("deduplicates a server queued event that arrives before the send response", () => {
-    const current = {
-      ...task("optimistic", "2026-01-01T00:00:00Z"),
-      queued_tasks: [task("server", "2026-01-01T00:00:01Z")],
-    };
-    const replacement = task("server", "2026-01-01T00:00:00Z");
-    const result = replacePendingChatTask(current, "optimistic", replacement);
-
-    expect(result.task_id).toBe("server");
-    expect(result.content).toBe("message server");
-    expect(result.queued_tasks).toEqual([]);
   });
 });

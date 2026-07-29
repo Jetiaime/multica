@@ -305,7 +305,6 @@ func TestHasPendingChatTasks_IgnoresTerminalTasks(t *testing.T) {
 	}
 }
 
-
 // TestHasPendingChatTasks_HidesOtherCreatorsTask locks the cs.creator_id gate:
 // user A's in-flight task on a workspace-visible agent — one B can freely
 // access — must still return has_pending=false for B, because B is not the

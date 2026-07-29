@@ -1227,6 +1227,7 @@ export function useRealtimeSync(
           created_at: new Date().toISOString(),
         }),
       );
+      qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
       invalidatePendingAggregate();
     });
 

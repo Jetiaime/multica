@@ -204,8 +204,6 @@ export interface ChatPendingTask {
   task_id?: string;
   status?: string;
   created_at?: string;
-  message_id?: string;
-  content?: string;
   /**
    * FIFO follow-ups waiting behind the current task. The current task itself
    * remains in the root fields for backward compatibility.

@@ -45,11 +45,6 @@ import type {
   ChatMessage,
   ChatPendingTask,
 } from "@multica/core/types";
-import {
-  enqueuePendingChatTask,
-  removePendingChatTask,
-  replacePendingChatTask,
-} from "@multica/core/chat/pending";
 import { api } from "@/data/api";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
@@ -252,28 +247,22 @@ export default function ChatTab() {
       if (!sessionId) return;
 
       const sentAt = new Date().toISOString();
-      const optimisticTaskId = `optimistic-task-${Date.now()}`;
       const optimistic: ChatMessage = {
         id: `optimistic-${Date.now()}`,
         chat_session_id: sessionId,
         role: "user",
         content,
-        task_id: optimisticTaskId,
+        task_id: null,
         created_at: sentAt,
       };
       qc.setQueryData<ChatMessage[]>(chatKeys.messages(sessionId), (old) =>
         old ? [...old, optimistic] : [optimistic],
       );
-      qc.setQueryData<ChatPendingTask>(
-        chatKeys.pendingTask(sessionId),
-        (old) => enqueuePendingChatTask(old, {
-          task_id: optimisticTaskId,
-          status: "queued",
-          created_at: sentAt,
-          message_id: optimistic.id,
-          content,
-        }),
-      );
+      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+        task_id: `optimistic-${optimistic.id}`,
+        status: "queued",
+        created_at: sentAt,
+      });
       if (isNewSession) {
         promoteNewDraft(sessionId);
         setActiveSessionId(sessionId);
@@ -283,26 +272,18 @@ export default function ChatTab() {
         const result = await api.sendChatMessage(sessionId, content, {
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         });
-        qc.setQueryData<ChatPendingTask>(
-          chatKeys.pendingTask(sessionId),
-          (old) => replacePendingChatTask(old, optimisticTaskId, {
-            task_id: result.task_id,
-            status: "queued",
-            created_at: result.created_at,
-            message_id: result.message_id,
-            content,
-          }),
-        );
+        qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+          task_id: result.task_id,
+          status: "queued",
+          created_at: result.created_at,
+        });
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         clearDraft(sessionId);
       } catch (err) {
         qc.setQueryData<ChatMessage[]>(chatKeys.messages(sessionId), (old) =>
           old ? old.filter((m) => m.id !== optimistic.id) : old,
         );
-        qc.setQueryData<ChatPendingTask>(
-          chatKeys.pendingTask(sessionId),
-          (old) => removePendingChatTask(old, optimisticTaskId),
-        );
+        qc.setQueryData(chatKeys.pendingTask(sessionId), {});
         throw err;
       }
     },
@@ -319,39 +300,11 @@ export default function ChatTab() {
   // ── Cancel in-flight ───────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     if (!pendingTask?.task_id || !activeSessionId) return;
-    const taskId = pendingTask.task_id;
-    qc.setQueryData<ChatPendingTask>(
-      chatKeys.pendingTask(activeSessionId),
-      (old) => removePendingChatTask(old, taskId),
-    );
-    void api.cancelTaskById(taskId)
-      .catch(() => {
-        // Silent — task may have already terminated server-side.
-      })
-      .finally(() => {
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(activeSessionId) });
-      });
+    qc.setQueryData(chatKeys.pendingTask(activeSessionId), {});
+    void api.cancelTaskById(pendingTask.task_id).catch(() => {
+      // Silent — task may have already terminated server-side.
+    });
   }, [pendingTask?.task_id, activeSessionId, qc]);
-
-  const handleRemoveQueuedTask = useCallback(
-    async (taskId: string) => {
-      if (!activeSessionId) return;
-      qc.setQueryData<ChatPendingTask>(
-        chatKeys.pendingTask(activeSessionId),
-        (old) => removePendingChatTask(old, taskId),
-      );
-      try {
-        await api.cancelTaskById(taskId);
-      } catch {
-        // The task may have started or terminated before the tap arrived.
-        // The authoritative refetch below restores whichever state won.
-      } finally {
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(activeSessionId) });
-        qc.invalidateQueries({ queryKey: chatKeys.messages(activeSessionId) });
-      }
-    },
-    [activeSessionId, qc],
-  );
 
   // ── Header / sheet actions ─────────────────────────────────────────────
   const handleNewChat = useCallback(() => {
@@ -457,8 +410,6 @@ export default function ChatTab() {
           onChangeText={(next) => setDraft(draftKey, next)}
           onSend={handleSend}
           onStop={handleStop}
-          queuedTasks={pendingTask?.queued_tasks ?? []}
-          onRemoveQueuedTask={handleRemoveQueuedTask}
           sending={sending}
           disabled={disabled}
           disabledReason={disabledReason}

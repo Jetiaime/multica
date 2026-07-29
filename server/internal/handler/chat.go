@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1345,61 +1344,14 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingRows, err := h.Queries.ListPendingChatTasksByCreator(
-		r.Context(),
-		db.ListPendingChatTasksByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
-			CreatorID:   parseUUID(userID),
-		},
-	)
+	tasks, err := h.Queries.ListPendingChatTasksForSession(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
 		return
 	}
-
-	tasks := make([]db.AgentTaskQueue, 0, len(pendingRows))
-	for _, row := range pendingRows {
-		if uuidToString(row.ChatSessionID) != sessionID {
-			continue
-		}
-		task, taskErr := h.Queries.GetAgentTask(r.Context(), row.TaskID)
-		if taskErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load pending chat task")
-			return
-		}
-		tasks = append(tasks, task)
-	}
 	if len(tasks) == 0 {
 		writeJSON(w, http.StatusOK, PendingChatTaskResponse{})
 		return
-	}
-
-	sort.SliceStable(tasks, func(i, j int) bool {
-		iQueued := tasks[i].Status == "queued"
-		jQueued := tasks[j].Status == "queued"
-		if iQueued != jQueued {
-			return !iQueued
-		}
-		if !tasks[i].CreatedAt.Time.Equal(tasks[j].CreatedAt.Time) {
-			return tasks[i].CreatedAt.Time.Before(tasks[j].CreatedAt.Time)
-		}
-		return uuidToString(tasks[i].ID) < uuidToString(tasks[j].ID)
-	})
-
-	messages, err := h.Queries.ListChatMessages(r.Context(), session.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load pending chat messages")
-		return
-	}
-	userMessageByTask := make(map[string]db.ChatMessage, len(messages))
-	for _, message := range messages {
-		if message.Role != "user" || !message.TaskID.Valid {
-			continue
-		}
-		taskID := uuidToString(message.TaskID)
-		if _, exists := userMessageByTask[taskID]; !exists {
-			userMessageByTask[taskID] = message
-		}
 	}
 
 	head := tasks[0]
@@ -1408,17 +1360,12 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 		if task.Status != "queued" {
 			continue
 		}
-		inputTaskID := task.ID
-		if task.ChatInputTaskID.Valid {
-			inputTaskID = task.ChatInputTaskID
-		}
-		message := userMessageByTask[uuidToString(inputTaskID)]
 		queued = append(queued, QueuedChatTaskResponse{
 			TaskID:    uuidToString(task.ID),
 			Status:    task.Status,
 			CreatedAt: timestampToString(task.CreatedAt),
-			MessageID: uuidToString(message.ID),
-			Content:   message.Content,
+			MessageID: uuidToString(task.MessageID),
+			Content:   task.Content,
 		})
 	}
 

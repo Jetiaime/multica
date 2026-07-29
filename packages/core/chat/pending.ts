@@ -13,7 +13,13 @@ function compareQueuedTasks(left: ChatQueuedTask, right: ChatQueuedTask): number
 
 function normalizeQueue(tasks: ChatQueuedTask[]): ChatQueuedTask[] {
   const byID = new Map<string, ChatQueuedTask>();
-  for (const task of tasks) byID.set(task.task_id, task);
+  // Keep the first observation of a task. The send response carries the
+  // authoritative created_at plus the message preview, while the later
+  // task:queued event only carries an id/status. Letting that sparse event win
+  // would replace visible text with the fallback label.
+  for (const task of tasks) {
+    if (!byID.has(task.task_id)) byID.set(task.task_id, task);
+  }
   return [...byID.values()].sort(compareQueuedTasks);
 }
 
@@ -34,35 +40,16 @@ export function enqueuePendingChatTask(
     return { ...task, queued_tasks: [] };
   }
   if (current.task_id === task.task_id) {
-    return { ...current, ...task, queued_tasks: current.queued_tasks ?? [] };
-  }
-  return {
-    ...current,
-    queued_tasks: normalizeQueue([...(current.queued_tasks ?? []), task]),
-  };
-}
-
-export function replacePendingChatTask(
-  current: ChatPendingTask | undefined,
-  taskID: string,
-  replacement: ChatQueuedTask,
-): ChatPendingTask {
-  if (!current?.task_id) return { ...replacement, queued_tasks: [] };
-  if (current.task_id === taskID) {
     return {
-      ...replacement,
-      queued_tasks: (current.queued_tasks ?? []).filter(
-        (task) => task.task_id !== replacement.task_id,
-      ),
+      ...current,
+      status: task.status,
+      created_at: current.created_at || task.created_at,
+      queued_tasks: current.queued_tasks ?? [],
     };
   }
   return {
     ...current,
-    queued_tasks: normalizeQueue(
-      (current.queued_tasks ?? [])
-        .filter((task) => task.task_id !== replacement.task_id)
-        .map((task) => task.task_id === taskID ? replacement : task),
-    ),
+    queued_tasks: normalizeQueue([...(current.queued_tasks ?? []), task]),
   };
 }
 

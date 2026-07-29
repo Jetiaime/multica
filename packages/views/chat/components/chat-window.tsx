@@ -619,7 +619,7 @@ export function ChatWindow() {
     async (taskId: string) => {
       if (!activeSessionId) return;
       await cancelChatTask(taskId, activeSessionId, {
-        restoreDraftToInput: false,
+        restoreDraftToInput: true,
         source: "queued-message",
       });
     },
