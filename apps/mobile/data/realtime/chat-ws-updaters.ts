@@ -150,9 +150,9 @@ export function applyChatDoneToCache(
   qc.invalidateQueries({
     queryKey: chatKeys.messages(payload.chat_session_id),
   });
-  // Clear in-flight pointer in the same tick so StatusPill unmounts and
-  // the AssistantMessage owns the rendering.
-  qc.setQueryData(chatKeys.pendingTask(payload.chat_session_id), {});
+  // A queued successor may already exist. Refetch the server-authoritative
+  // head instead of clearing it and briefly presenting the session as idle.
+  invalidatePendingTask(qc, payload.chat_session_id);
 }
 
 /**
@@ -210,14 +210,9 @@ export function seedPendingTaskFromQueued(
   payload: TaskQueuedPayload,
 ) {
   if (!payload.chat_session_id) return;
-  qc.setQueryData<ChatPendingTask>(
-    chatKeys.pendingTask(payload.chat_session_id),
-    (old) => ({
-      ...(old ?? {}),
-      task_id: payload.task_id,
-      status: "queued",
-    }),
-  );
+  // A follow-up can be queued while another task is active. The event does
+  // not carry enough queue state to replace that active head safely.
+  invalidatePendingTask(qc, payload.chat_session_id);
 }
 
 export function promotePendingTaskToRunning(
@@ -234,13 +229,17 @@ export function promotePendingTaskToRunning(
       return { ...old, status: "running" };
     },
   );
+  invalidatePendingTask(qc, payload.chat_session_id);
+  qc.invalidateQueries({
+    queryKey: chatKeys.messages(payload.chat_session_id),
+  });
 }
 
-export function clearPendingTask(
+export function invalidatePendingTask(
   qc: QueryClient,
   sessionId: string,
 ) {
-  qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+  qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
 // =====================================================
