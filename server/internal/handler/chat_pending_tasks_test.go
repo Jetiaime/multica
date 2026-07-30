@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -65,6 +66,46 @@ func insertPendingChatTask(t *testing.T, agentID, sessionID, status string) stri
 	return taskID
 }
 
+func insertQueuedChatInputWithAttachment(
+	t *testing.T,
+	agentID, sessionID, content string,
+) (taskID, messageID, attachmentID string) {
+	t.Helper()
+	taskID = insertPendingChatTask(t, agentID, sessionID, "queued")
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue SET chat_input_task_id = id WHERE id = $1
+	`, taskID); err != nil {
+		t.Fatalf("stamp queued input owner: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'user', $2, $3)
+		RETURNING id
+	`, sessionID, content, taskID).Scan(&messageID); err != nil {
+		t.Fatalf("insert queued input: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM chat_draft_restore WHERE id = $1`, messageID)
+	})
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO attachment (
+			workspace_id, uploader_type, uploader_id, filename, url,
+			content_type, size_bytes, chat_session_id, chat_message_id
+		)
+		VALUES (
+			$1, 'member', $2, 'queued.png', 'https://cdn.example.com/queued.png',
+			'image/png', 9, $3, $4
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID, sessionID, messageID).Scan(&attachmentID); err != nil {
+		t.Fatalf("insert queued attachment: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
+	})
+	return taskID, messageID, attachmentID
+}
+
 func decodePendingTasks(t *testing.T, w *httptest.ResponseRecorder) PendingChatTasksResponse {
 	t.Helper()
 	if w.Code != http.StatusOK {
@@ -96,6 +137,326 @@ func containsPendingTask(tasks []PendingChatTaskItem, taskID string) bool {
 		}
 	}
 	return false
+}
+
+func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "PendingSessionQueueAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	activeID := insertPendingChatTask(t, agentID, sessionID, "running")
+	nextID := insertPendingChatTask(t, agentID, sessionID, "queued")
+	laterID := insertPendingChatTask(t, agentID, sessionID, "queued")
+	regenerateID := insertPendingChatTask(t, agentID, sessionID, "queued")
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET regenerate_quick_actions_for = $2 WHERE id = $1`,
+		regenerateID,
+		uuid.New(),
+	); err != nil {
+		t.Fatalf("mark quick-actions regeneration task: %v", err)
+	}
+
+	for _, row := range []struct {
+		id        string
+		createdAt string
+		content   string
+	}{
+		{activeID, "2026-07-29T01:00:00Z", "active prompt"},
+		{nextID, "2026-07-29T01:00:01Z", "next prompt"},
+		{laterID, "2026-07-29T01:00:02Z", "later prompt"},
+	} {
+		if _, err := testPool.Exec(context.Background(), `
+			UPDATE agent_task_queue
+			SET created_at = $2, chat_input_task_id = id
+			WHERE id = $1
+		`, row.id, row.createdAt); err != nil {
+			t.Fatalf("stamp pending task %s: %v", row.id, err)
+		}
+		if _, err := testPool.Exec(context.Background(), `
+			INSERT INTO chat_message (chat_session_id, role, content, task_id, created_at)
+			VALUES ($1, 'user', $2, $3, $4)
+		`, sessionID, row.content, row.id, row.createdAt); err != nil {
+			t.Fatalf("insert pending message %s: %v", row.id, err)
+		}
+	}
+	transcript, err := testHandler.Queries.ListChatMessages(
+		context.Background(),
+		util.MustParseUUID(sessionID),
+	)
+	if err != nil {
+		t.Fatalf("list compatibility transcript: %v", err)
+	}
+	if len(transcript) != 1 || util.UUIDToString(transcript[0].TaskID) != activeID {
+		t.Fatalf("queued prompts leaked into legacy transcript: %+v", transcript)
+	}
+	page, err := testHandler.Queries.ListChatMessagesPage(
+		context.Background(),
+		db.ListChatMessagesPageParams{
+			ChatSessionID: util.MustParseUUID(sessionID),
+			Limit:         50,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list paged compatibility transcript: %v", err)
+	}
+	if len(page) != 1 || util.UUIDToString(page[0].TaskID) != activeID {
+		t.Fatalf("queued prompts leaked into paged transcript: %+v", page)
+	}
+
+	req := withURLParam(
+		newRequestAs(
+			testUserID,
+			http.MethodGet,
+			"/api/chat/sessions/"+sessionID+"/pending-task",
+			nil,
+		),
+		"sessionId",
+		sessionID,
+	)
+	w := httptest.NewRecorder()
+	testHandler.GetPendingChatTask(w, chatPendingCtxAs(t, req, testUserID))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp PendingChatTaskResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode pending task queue: %v", err)
+	}
+	if resp.TaskID != activeID || resp.Status != "running" {
+		t.Fatalf("unexpected active head: %+v", resp)
+	}
+	if !resp.SupportsQueue {
+		t.Fatal("pending response must advertise queue support")
+	}
+	if len(resp.QueuedTasks) != 2 {
+		t.Fatalf("expected two queued tasks, got %+v", resp.QueuedTasks)
+	}
+	if resp.QueuedTasks[0].TaskID != nextID ||
+		resp.QueuedTasks[0].Content != "next prompt" ||
+		resp.QueuedTasks[1].TaskID != laterID ||
+		resp.QueuedTasks[1].Content != "later prompt" {
+		t.Fatalf("queue is not FIFO with message summaries: %+v", resp.QueuedTasks)
+	}
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET priority = 4 WHERE id = $1`,
+		nextID,
+	); err != nil {
+		t.Fatalf("seed prior send-now selection: %v", err)
+	}
+
+	prioritizeReq := newRequestAs(
+		testUserID,
+		http.MethodPost,
+		"/api/chat/sessions/"+sessionID+"/queued-tasks/"+laterID+"/prioritize",
+		nil,
+	)
+	prioritizeReq = withURLParams(
+		prioritizeReq,
+		"sessionId", sessionID,
+		"taskId", laterID,
+	)
+	prioritizeW := httptest.NewRecorder()
+	testHandler.PrioritizeQueuedChatTask(
+		prioritizeW,
+		chatPendingCtxAs(t, prioritizeReq, testUserID),
+	)
+	if prioritizeW.Code != http.StatusOK {
+		t.Fatalf("expected prioritize 200, got %d: %s", prioritizeW.Code, prioritizeW.Body.String())
+	}
+	var prioritized PrioritizeQueuedChatTaskResponse
+	if err := json.Unmarshal(prioritizeW.Body.Bytes(), &prioritized); err != nil {
+		t.Fatalf("decode prioritize response: %v", err)
+	}
+	if prioritized.TaskID != laterID || prioritized.ActiveTaskID != activeID {
+		t.Fatalf("prioritize response is not server-authoritative: %+v", prioritized)
+	}
+
+	w = httptest.NewRecorder()
+	testHandler.GetPendingChatTask(w, chatPendingCtxAs(t, req, testUserID))
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode prioritized queue: %v", err)
+	}
+	if resp.TaskID != activeID ||
+		len(resp.QueuedTasks) != 2 ||
+		resp.QueuedTasks[0].TaskID != laterID ||
+		resp.QueuedTasks[1].TaskID != nextID {
+		t.Fatalf("send-now priority did not move only the selected follow-up: %+v", resp)
+	}
+
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET status = 'completed' WHERE id = $1`,
+		activeID,
+	); err != nil {
+		t.Fatalf("complete active task: %v", err)
+	}
+	w = httptest.NewRecorder()
+	testHandler.GetPendingChatTask(w, chatPendingCtxAs(t, req, testUserID))
+	resp = PendingChatTaskResponse{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode all-queued state: %v", err)
+	}
+	if resp.TaskID != laterID ||
+		resp.Status != "queued" ||
+		len(resp.QueuedTasks) != 2 ||
+		resp.QueuedTasks[0].TaskID != laterID ||
+		resp.QueuedTasks[1].TaskID != nextID {
+		t.Fatalf("all queued prompts must remain in the dedicated queue: %+v", resp)
+	}
+}
+
+func TestPendingQueueHeadMatchesClaimForEqualCreatedAt(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "Pending Equal Timestamp Agent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	lowID := uuid.New()
+	highID := lowID
+	lowID[15] = 0
+	highID[15] = 255
+	for _, taskID := range []uuid.UUID{highID, lowID} {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO agent_task_queue (
+				id, agent_id, runtime_id, status, priority, chat_session_id, created_at
+			)
+			VALUES ($1, $2, $3, 'queued', 2, $4, '2026-07-29T01:00:00Z')
+		`, taskID, agentID, handlerTestRuntimeID(t), sessionID); err != nil {
+			t.Fatalf("insert equal-timestamp task %s: %v", taskID, err)
+		}
+	}
+
+	pending, err := testHandler.Queries.ListPendingChatTasksForSession(ctx, parseUUID(sessionID))
+	if err != nil {
+		t.Fatalf("list pending tasks: %v", err)
+	}
+	if len(pending) != 2 || uuidToString(pending[0].ID) != lowID.String() {
+		t.Fatalf("pending head = %+v, want lower id %s", pending, lowID)
+	}
+
+	claimed, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if claimed == nil {
+		t.Fatal("claim returned no task")
+	}
+	if got := uuidToString(claimed.ID); got != lowID.String() {
+		t.Fatalf("claimed task = %s, pending head = %s", got, lowID)
+	}
+}
+
+func TestPrioritizeQueuedChatTask_StaleTargetPreservesExistingPriority(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "StalePrioritizeQueueAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	existingID := insertPendingChatTask(t, agentID, sessionID, "queued")
+	staleID := insertPendingChatTask(t, agentID, sessionID, "completed")
+	if _, err := testPool.Exec(
+		context.Background(),
+		`UPDATE agent_task_queue SET priority = 4 WHERE id = $1`,
+		existingID,
+	); err != nil {
+		t.Fatalf("seed existing priority: %v", err)
+	}
+
+	req := withURLParams(
+		newRequestAs(
+			testUserID,
+			http.MethodPost,
+			"/api/chat/sessions/"+sessionID+"/queued-tasks/"+staleID+"/prioritize",
+			nil,
+		),
+		"sessionId", sessionID,
+		"taskId", staleID,
+	)
+	w := httptest.NewRecorder()
+	testHandler.PrioritizeQueuedChatTask(w, chatPendingCtxAs(t, req, testUserID))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var priority int
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT priority FROM agent_task_queue WHERE id = $1`,
+		existingID,
+	).Scan(&priority); err != nil {
+		t.Fatalf("read preserved priority: %v", err)
+	}
+	if priority != 4 {
+		t.Fatalf("stale prioritize demoted existing queue head to %d", priority)
+	}
+}
+
+func TestClearQueuedChatTasks_CancelsWholeQueueAndDeletesInputs(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ClearPendingQueueAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	var taskIDs, attachmentIDs []string
+	for _, content := range []string{"queued prompt A", "queued prompt B"} {
+		taskID, _, attachmentID := insertQueuedChatInputWithAttachment(
+			t,
+			agentID,
+			sessionID,
+			content,
+		)
+		taskIDs = append(taskIDs, taskID)
+		attachmentIDs = append(attachmentIDs, attachmentID)
+	}
+
+	req := withURLParam(
+		newRequestAs(
+			testUserID,
+			http.MethodDelete,
+			"/api/chat/sessions/"+sessionID+"/queued-tasks",
+			nil,
+		),
+		"sessionId",
+		sessionID,
+	)
+	w := httptest.NewRecorder()
+	testHandler.ClearQueuedChatTasks(w, chatPendingCtxAs(t, req, testUserID))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, taskID := range taskIDs {
+		if got := taskStatus(t, taskID); got != "cancelled" {
+			t.Fatalf("queued task %s status = %q, want cancelled", taskID, got)
+		}
+	}
+	var inputCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM chat_message WHERE task_id = $1 OR task_id = $2
+	`, taskIDs[0], taskIDs[1]).Scan(&inputCount); err != nil {
+		t.Fatalf("count queued inputs after clear: %v", err)
+	}
+	if inputCount != 0 {
+		t.Fatalf("clear left %d queued input messages", inputCount)
+	}
+	var attachmentCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM attachment WHERE id = $1 OR id = $2
+	`, attachmentIDs[0], attachmentIDs[1]).Scan(&attachmentCount); err != nil {
+		t.Fatalf("count queued attachments after clear: %v", err)
+	}
+	if attachmentCount != 0 {
+		t.Fatalf("clear left %d discarded attachment rows", attachmentCount)
+	}
 }
 
 // TestListPendingChatTasks_HidesPrivateAgentFromLostAccessCreator verifies the
@@ -235,7 +596,6 @@ func TestHasPendingChatTasks_IgnoresTerminalTasks(t *testing.T) {
 		t.Fatalf("has-any returned true for a terminal (completed) task")
 	}
 }
-
 
 // TestHasPendingChatTasks_HidesOtherCreatorsTask locks the cs.creator_id gate:
 // user A's in-flight task on a workspace-visible agent — one B can freely
