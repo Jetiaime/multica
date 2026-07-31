@@ -1548,10 +1548,16 @@ func (h *Handler) PrioritizeQueuedChatTask(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to prioritize queued task")
 		return
 	}
+	queuedTask, err := qtx.GetAgentTask(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prioritized task")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit queued task priority")
 		return
 	}
+	h.TaskService.BroadcastTaskQueued(r.Context(), queuedTask)
 
 	writeJSON(w, http.StatusOK, PrioritizeQueuedChatTaskResponse{
 		TaskID:       uuidToString(prioritized.TaskID),

@@ -1267,7 +1267,7 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   task_id: z.string().min(1),
   supports_queue: z.boolean().optional(),
   created_at: z.string().min(1),
-  attachment_ids: z.array(z.string()).optional(),
+  attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
 }).loose();
 
 export const PrioritizeQueuedChatTaskResponseSchema:

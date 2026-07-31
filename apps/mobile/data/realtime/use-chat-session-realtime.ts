@@ -12,7 +12,7 @@
  *   - chat:quick_actions        → patch the async quick-actions supplement
  *                                  onto the assistant message
  *   - task:queued / dispatch    → seed / promote pendingTask
- *   - task:cancelled            → refresh pendingTask
+ *   - task:cancelled            → refresh pendingTask + messages
  *   - task:completed            → no-op for messages (chat:done already
  *                                  wrote the assistant message); just
  *                                  refresh pendingTask
@@ -85,6 +85,7 @@ export function useChatSessionRealtime(
         ws.on("task:cancelled", (payload) => {
           if (!isMine(payload)) return;
           invalidatePendingTask(qc, sessionId);
+          qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         }),
         ws.on("task:completed", (payload) => {
           if (!isMine(payload)) return;

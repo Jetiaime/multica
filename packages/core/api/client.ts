@@ -2379,7 +2379,7 @@ export class ApiClient {
       null,
       { endpoint: "POST /api/chat/sessions/:id/messages" },
     );
-    if (!response) throw new Error();
+    if (!response) throw new Error("invalid send chat message response");
     return response;
   }
 

@@ -3,7 +3,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { chatKeys } from "@multica/core/chat/queries";
 import {
@@ -56,22 +56,40 @@ export function useChatTaskActions(
       const pendingKey = chatKeys.pendingTask(sessionId);
       await qc.cancelQueries({ queryKey: pendingKey });
       const pendingSnapshot = qc.getQueryData<ChatPendingTask>(pendingKey);
+      const derivedQueuedAction = !options.queuedAction &&
+        (options.restoreDraftToInput &&
+            pendingSnapshot?.task_id === taskId &&
+            pendingSnapshot.status === "queued" &&
+            pendingSnapshot.supports_queue === true);
+      let queuedAction = options.queuedAction ??
+        (derivedQueuedAction ? "edit" : undefined);
       qc.setQueryData<ChatPendingTask>(
         pendingKey,
         (old) => removePendingChatTask(old, taskId),
       );
 
       try {
-        const result = await api.cancelTaskById(
-          taskId,
-          options.queuedAction ? { queuedAction: options.queuedAction, sessionId } : undefined,
-        );
+        let result: CancelTaskResponse;
+        try {
+          result = await api.cancelTaskById(
+            taskId,
+            queuedAction ? { queuedAction, sessionId } : undefined,
+          );
+        } catch (err) {
+          if (!(derivedQueuedAction && err instanceof ApiError && err.status === 409)) {
+            throw err;
+          }
+          // The daemon claimed the task after our cached queued snapshot.
+          // Preserve Stop semantics by cancelling its new active state.
+          queuedAction = undefined;
+          result = await api.cancelTaskById(taskId);
+        }
         const restored = result.cancelled_chat_message;
         if (restored) {
           removeChatMessageFromCaches(qc, restored.chat_session_id, restored.message_id);
           if (
             restored.restore_to_input &&
-            !options.queuedAction &&
+            !queuedAction &&
             options.restoreDraftToInput &&
             restored.chat_session_id === sessionId
           ) {
@@ -103,7 +121,7 @@ export function useChatTaskActions(
         return null;
       } finally {
         qc.invalidateQueries({ queryKey: pendingKey });
-        if (options.queuedAction === "edit") {
+        if (queuedAction === "edit") {
           qc.invalidateQueries({ queryKey: chatKeys.draftRestores(sessionId) });
         }
         if (wsId) qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });

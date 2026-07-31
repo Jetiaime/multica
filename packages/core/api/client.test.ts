@@ -1588,6 +1588,27 @@ describe("ApiClient", () => {
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
     });
 
+    it("sendChatMessage accepts the server's null attachment_ids for text-only sends", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({
+            message_id: "m1",
+            task_id: "t1",
+            created_at: "2026-08-01T00:00:00Z",
+            attachment_ids: null,
+          }), {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      await expect(
+        new ApiClient("https://api.example.test").sendChatMessage("session-1", "hello"),
+      ).resolves.toMatchObject({ attachment_ids: undefined });
+    });
+
     it("sendChatMessage rejects a malformed response", async () => {
       vi.stubGlobal(
         "fetch",

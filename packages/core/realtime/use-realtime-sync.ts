@@ -1411,6 +1411,7 @@ export function useRealtimeSync(
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
       invalidateChatMessageQueries(qc, payload.chat_session_id);
       invalidatePendingAggregate();
+      invalidateSessionLists();
     });
 
     const unsubTaskCompleted = ws.on("task:completed", (p) => {

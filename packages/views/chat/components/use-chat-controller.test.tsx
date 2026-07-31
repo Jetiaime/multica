@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { Agent, ChatPendingTask, ChatSession, Project } from "@multica/core/types";
 
 interface QueuedRestore {
@@ -97,6 +97,14 @@ vi.mock("@multica/core/projects/queries", () => ({
 }));
 vi.mock("@multica/views/issues/components", () => ({ canAssignAgent: () => true }));
 vi.mock("@multica/core/api", () => ({
+  ApiError: class ApiError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
+      super(message);
+    }
+  },
   api: {
     sendChatMessage: vi.fn(),
     cancelTaskById: vi.fn(),
@@ -170,7 +178,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 });
 
 import { useChatController } from "./use-chat-controller";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 
 // --- Fixtures ---------------------------------------------------------------
 function makeSession(
@@ -541,6 +549,97 @@ describe("useChatController queued task actions", () => {
     expect(h.queryClient.invalidateQueries).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: expect.arrayContaining(["draft-restores"]) }),
     );
+  });
+
+  it("uses durable edit cancellation when Stop targets a queued head", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const pending: ChatPendingTask = {
+      task_id: taskId,
+      status: "queued",
+      supports_queue: true,
+      queued_tasks: [],
+    };
+    h.queryClient.getQueryData.mockReturnValue(pending);
+    vi.mocked(api.cancelTaskById).mockResolvedValue({
+      id: taskId,
+    } as Awaited<ReturnType<typeof api.cancelTaskById>>);
+    const result = setup("sA", [sA], [agentA], pending);
+
+    act(() => result.current.handleStop());
+
+    await waitFor(() => {
+      expect(api.cancelTaskById).toHaveBeenCalledWith(taskId, {
+        queuedAction: "edit",
+        sessionId: "sA",
+      });
+    });
+  });
+
+  it("keeps the legacy synchronous restore path when queue capability is absent", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const pending: ChatPendingTask = {
+      task_id: taskId,
+      status: "queued",
+      queued_tasks: [],
+    };
+    h.queryClient.getQueryData.mockReturnValue(pending);
+    vi.mocked(api.cancelTaskById).mockResolvedValue({
+      id: taskId,
+      cancelled_chat_message: {
+        chat_session_id: "sA",
+        message_id: "message-queued",
+        content: "Keep this prompt",
+        restore_to_input: true,
+        attachments: [],
+      },
+    } as Awaited<ReturnType<typeof api.cancelTaskById>>);
+    const result = setup("sA", [sA], [agentA], pending);
+
+    act(() => result.current.handleStop());
+
+    await waitFor(() => {
+      expect(api.cancelTaskById).toHaveBeenCalledWith(taskId, undefined);
+      expect(h.store.enqueuePendingSendRestore).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "Keep this prompt" }),
+      );
+    });
+  });
+
+  it("falls back to active cancellation when a derived queued Stop loses the claim race", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const pending: ChatPendingTask = {
+      task_id: taskId,
+      status: "queued",
+      supports_queue: true,
+      queued_tasks: [],
+    };
+    h.queryClient.getQueryData.mockReturnValue(pending);
+    vi.mocked(api.cancelTaskById)
+      .mockRejectedValueOnce(new ApiError("task is no longer queued", 409, "Conflict"))
+      .mockResolvedValueOnce({
+        id: taskId,
+        cancelled_chat_message: {
+          chat_session_id: "sA",
+          message_id: "message-queued",
+          content: "Stop and restore this",
+          restore_to_input: true,
+          attachments: [],
+        },
+      } as Awaited<ReturnType<typeof api.cancelTaskById>>);
+    const result = setup("sA", [sA], [agentA], pending);
+
+    act(() => result.current.handleStop());
+
+    await waitFor(() => {
+      expect(api.cancelTaskById).toHaveBeenNthCalledWith(1, taskId, {
+        queuedAction: "edit",
+        sessionId: "sA",
+      });
+      expect(api.cancelTaskById).toHaveBeenNthCalledWith(2, taskId);
+      expect(h.store.enqueuePendingSendRestore).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "Stop and restore this" }),
+      );
+    });
   });
 
   it("removes a queued prompt without restoring it", async () => {

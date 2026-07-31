@@ -1937,6 +1937,11 @@ func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []d
 	s.notifyTasksFinished(cancelled)
 }
 
+// BroadcastTaskQueued emits a post-commit queue invalidation for clients.
+func (s *TaskService) BroadcastTaskQueued(ctx context.Context, task db.AgentTaskQueue) {
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+}
+
 func (s *TaskService) CaptureCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
 		s.captureTaskCancelled(ctx, t)
@@ -2058,11 +2063,17 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 }
 
 // CancelQueuedChatTasks atomically cancels every queued follow-up in a chat
-// session. It takes the same agent lock as ClaimTask so a daemon cannot promote
-// one row while the bulk update is in progress.
+// session. The session lock preserves the delete path's session -> agent -> task
+// order; the agent lock then prevents ClaimTask from promoting a row mid-update.
 func (s *TaskService) CancelQueuedChatTasks(ctx context.Context, sessionID, agentID pgtype.UUID) error {
 	var tasks []db.AgentTaskQueue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if _, err := qtx.LockChatSessionForDelete(ctx, sessionID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("lock chat session: %w", err)
+		}
 		if _, err := qtx.GetAgentForClaimUpdate(ctx, agentID); err != nil {
 			return fmt.Errorf("lock chat agent: %w", err)
 		}

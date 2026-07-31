@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // chatPendingCtxAs injects the workspace + member context that the chi
@@ -402,6 +404,49 @@ func TestPrioritizeQueuedChatTask_StaleTargetPreservesExistingPriority(t *testin
 	}
 	if priority != 4 {
 		t.Fatalf("stale prioritize demoted existing queue head to %d", priority)
+	}
+}
+
+func TestPrioritizeQueuedChatTask_BroadcastsQueueInvalidation(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "PrioritizeQueueBroadcastAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	taskID := insertPendingChatTask(t, agentID, sessionID, "queued")
+	got := make(chan events.Event, 1)
+	testHandler.Bus.Subscribe(protocol.EventTaskQueued, func(event events.Event) {
+		payload, ok := event.Payload.(map[string]any)
+		if !ok || payload["task_id"] != taskID {
+			return
+		}
+		got <- event
+	})
+
+	req := withURLParams(
+		newRequestAs(
+			testUserID,
+			http.MethodPost,
+			"/api/chat/sessions/"+sessionID+"/queued-tasks/"+taskID+"/prioritize",
+			nil,
+		),
+		"sessionId", sessionID,
+		"taskId", taskID,
+	)
+	w := httptest.NewRecorder()
+	testHandler.PrioritizeQueuedChatTask(w, chatPendingCtxAs(t, req, testUserID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case event := <-got:
+		if event.WorkspaceID != testWorkspaceID {
+			t.Fatalf("event workspace = %s, want %s", event.WorkspaceID, testWorkspaceID)
+		}
+	default:
+		t.Fatal("prioritize did not broadcast task:queued invalidation")
 	}
 }
 
