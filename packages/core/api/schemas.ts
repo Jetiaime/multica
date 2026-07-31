@@ -18,6 +18,7 @@ import type {
   ChatDraftRestoresResponse,
   ChatPendingTask,
   PrioritizeQueuedChatTaskResponse,
+  SendChatMessageResponse,
   Comment,
   CreateAgentFromTemplateResponse,
   CreateBillingCheckoutSessionResponse,
@@ -1260,6 +1261,14 @@ export const ChatPendingTaskSchema: z.ZodType<ChatPendingTask> = z.object({
 }).loose();
 
 export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
+
+export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> = z.object({
+  message_id: z.string().min(1),
+  task_id: z.string().min(1),
+  supports_queue: z.boolean().optional(),
+  created_at: z.string().min(1),
+  attachment_ids: z.array(z.string()).optional(),
+}).loose();
 
 export const PrioritizeQueuedChatTaskResponseSchema:
   z.ZodType<PrioritizeQueuedChatTaskResponse> = z.object({

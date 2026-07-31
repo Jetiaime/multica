@@ -189,8 +189,11 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list compatibility transcript: %v", err)
 	}
-	if len(transcript) != 1 || util.UUIDToString(transcript[0].TaskID) != activeID {
-		t.Fatalf("queued prompts leaked into legacy transcript: %+v", transcript)
+	if len(transcript) != 3 ||
+		util.UUIDToString(transcript[0].TaskID) != activeID ||
+		util.UUIDToString(transcript[1].TaskID) != nextID ||
+		util.UUIDToString(transcript[2].TaskID) != laterID {
+		t.Fatalf("legacy transcript dropped queued prompts: %+v", transcript)
 	}
 	page, err := testHandler.Queries.ListChatMessagesPage(
 		context.Background(),
@@ -202,8 +205,11 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list paged compatibility transcript: %v", err)
 	}
-	if len(page) != 1 || util.UUIDToString(page[0].TaskID) != activeID {
-		t.Fatalf("queued prompts leaked into paged transcript: %+v", page)
+	if len(page) != 3 ||
+		util.UUIDToString(page[0].TaskID) != laterID ||
+		util.UUIDToString(page[1].TaskID) != nextID ||
+		util.UUIDToString(page[2].TaskID) != activeID {
+		t.Fatalf("paged transcript dropped queued prompts: %+v", page)
 	}
 
 	req := withURLParam(

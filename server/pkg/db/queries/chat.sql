@@ -315,16 +315,6 @@ RETURNING *;
 -- name: ListChatMessages :many
 SELECT message.* FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND NOT (
-    message.role = 'user'
-    AND EXISTS (
-      SELECT 1
-      FROM agent_task_queue AS task
-      WHERE task.chat_session_id = message.chat_session_id
-        AND task.status = 'queued'
-        AND task.id = message.task_id
-    )
-  )
 ORDER BY message.created_at ASC, message.id ASC;
 
 -- name: ListChatInputMessages :many
@@ -342,16 +332,6 @@ ORDER BY created_at ASC, id ASC;
 -- name: ListChatMessagesPage :many
 SELECT message.* FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND NOT (
-    message.role = 'user'
-    AND EXISTS (
-      SELECT 1
-      FROM agent_task_queue AS task
-      WHERE task.chat_session_id = message.chat_session_id
-        AND task.status = 'queued'
-        AND task.id = message.task_id
-    )
-  )
   AND (
     sqlc.narg('before_created_at')::timestamptz IS NULL
     OR (message.created_at, message.id) < (sqlc.narg('before_created_at')::timestamptz, sqlc.narg('before_id')::uuid)

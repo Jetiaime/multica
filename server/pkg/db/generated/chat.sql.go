@@ -1162,16 +1162,6 @@ func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID)
 const listChatMessages = `-- name: ListChatMessages :many
 SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND NOT (
-    message.role = 'user'
-    AND EXISTS (
-      SELECT 1
-      FROM agent_task_queue AS task
-      WHERE task.chat_session_id = message.chat_session_id
-        AND task.status = 'queued'
-        AND task.id = message.task_id
-    )
-  )
 ORDER BY message.created_at ASC, message.id ASC
 `
 
@@ -1211,16 +1201,6 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
 SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions FROM chat_message AS message
 WHERE message.chat_session_id = $1
-  AND NOT (
-    message.role = 'user'
-    AND EXISTS (
-      SELECT 1
-      FROM agent_task_queue AS task
-      WHERE task.chat_session_id = message.chat_session_id
-        AND task.status = 'queued'
-        AND task.id = message.task_id
-    )
-  )
   AND (
     $3::timestamptz IS NULL
     OR (message.created_at, message.id) < ($3::timestamptz, $4::uuid)

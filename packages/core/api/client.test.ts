@@ -1552,7 +1552,7 @@ describe("ApiClient", () => {
 
     it("sendChatMessage serialises attachment_ids onto the JSON body when present", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
         }),
@@ -1572,7 +1572,7 @@ describe("ApiClient", () => {
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
       const fetchMock = vi.fn().mockImplementation(() =>
         Promise.resolve(
-          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
             status: 201,
             headers: { "Content-Type": "application/json" },
           }),
@@ -1586,6 +1586,22 @@ describe("ApiClient", () => {
 
       expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({ content: "hello" });
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
+    });
+
+    it("sendChatMessage rejects a malformed response", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ message_id: "m1", task_id: 42 }), {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      await expect(
+        new ApiClient("https://api.example.test").sendChatMessage("session-1", "hello"),
+      ).rejects.toThrow();
     });
   });
 });

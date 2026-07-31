@@ -192,6 +192,7 @@ import {
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
   PrioritizeQueuedChatTaskResponseSchema,
+  SendChatMessageResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
@@ -2368,10 +2369,18 @@ export class ApiClient {
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),
     });
+    const response = parseWithFallback<SendChatMessageResponse | null>(
+      raw,
+      SendChatMessageResponseSchema,
+      null,
+      { endpoint: "POST /api/chat/sessions/:id/messages" },
+    );
+    if (!response) throw new Error();
+    return response;
   }
 
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
