@@ -214,6 +214,17 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 		t.Fatalf("paged transcript dropped queued prompts: %+v", page)
 	}
 
+	legacy, err := testHandler.Queries.ListChatMessagesForLegacyTask(
+		context.Background(),
+		util.MustParseUUID(sessionID),
+	)
+	if err != nil {
+		t.Fatalf("list legacy task input: %v", err)
+	}
+	if len(legacy) != 1 || util.UUIDToString(legacy[0].TaskID) != activeID {
+		t.Fatalf("legacy task input leaked queued successor: %+v", legacy)
+	}
+
 	req := withURLParam(
 		newRequestAs(
 			testUserID,

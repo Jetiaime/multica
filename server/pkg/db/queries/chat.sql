@@ -317,6 +317,23 @@ SELECT message.* FROM chat_message AS message
 WHERE message.chat_session_id = $1
 ORDER BY message.created_at ASC, message.id ASC;
 
+-- name: ListChatMessagesForLegacyTask :many
+-- Legacy/reclaimed daemon tasks use trailing history, but must not absorb a
+-- newer queued successor that is already bound to its own user message.
+SELECT message.* FROM chat_message AS message
+WHERE message.chat_session_id = $1
+  AND NOT (
+    message.role = 'user'
+    AND EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.chat_session_id = message.chat_session_id
+        AND task.status = 'queued'
+        AND task.id = message.task_id
+    )
+  )
+ORDER BY message.created_at ASC, message.id ASC;
+
 -- name: ListChatInputMessages :many
 -- Loads the immutable user-message input batch owned by a direct-chat task.
 -- The caller passes the task's chat_input_task_id (itself for an original send,
@@ -324,7 +341,7 @@ ORDER BY message.created_at ASC, message.id ASC;
 -- the user sent for this turn — and never absorbs a message that arrived after
 -- the batch was sealed, no matter what the assistant wrote or when. Only used
 -- for new task-owned direct-chat tasks; legacy/channel (chat_input_task_id
--- NULL) tasks keep using ListChatMessages + trailingUserMessages.
+-- NULL) tasks keep using ListChatMessagesForLegacyTask + trailingUserMessages.
 SELECT * FROM chat_message
 WHERE task_id = $1 AND role = 'user'
 ORDER BY created_at ASC, id ASC;

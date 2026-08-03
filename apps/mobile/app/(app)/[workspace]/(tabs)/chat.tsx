@@ -68,6 +68,7 @@ import {
 } from "@/data/stores/chat-drafts-store";
 import { useChatSessionPickerStore } from "@/data/stores/chat-session-picker-store";
 import { useChatSessionRealtime } from "@/data/realtime/use-chat-session-realtime";
+import { seedAcceptedPendingTask } from "@/data/realtime/chat-ws-updaters";
 import { canAssignAgent } from "@/lib/can-assign-agent";
 import { useWorkspaceAgentAvailability } from "@/lib/workspace-agent-availability";
 import { useAgentPresence } from "@/lib/use-agent-presence";
@@ -287,10 +288,11 @@ export default function ChatTab() {
         const result = await api.sendChatMessage(sessionId, content, {
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         });
-        qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+        seedAcceptedPendingTask(qc, {
+          chat_session_id: sessionId,
           task_id: result.task_id,
-          status: "queued",
           created_at: result.created_at,
+          supports_queue: result.supports_queue,
         });
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         if (options.clearDraft !== false) {
@@ -318,6 +320,7 @@ export default function ChatTab() {
   // ── Cancel in-flight ───────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     if (!pendingTask?.task_id || !activeSessionId) return;
+    if (pendingTask.status === "queued") return;
     qc.setQueryData(chatKeys.pendingTask(activeSessionId), {});
     void api.cancelTaskById(pendingTask.task_id).catch(() => {
       // Silent — task may have already terminated server-side.
@@ -442,6 +445,7 @@ export default function ChatTab() {
           onSend={handleSend}
           onStop={handleStop}
           sending={sending}
+          allowStop={pendingTask?.status !== "queued"}
           disabled={disabled}
           disabledReason={disabledReason}
         />

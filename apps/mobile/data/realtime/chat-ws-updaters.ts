@@ -20,6 +20,7 @@
  *   - chatKeys.pendingTask(sessionId)→ ChatPendingTask (empty `{}` = no in-flight)
  */
 import type { QueryClient } from "@tanstack/react-query";
+import { enqueuePendingChatTask } from "@multica/core/chat/pending";
 import type {
   ChatDonePayload,
   ChatMessage,
@@ -240,6 +241,41 @@ export function invalidatePendingTask(
   sessionId: string,
 ) {
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+}
+
+export function seedAcceptedPendingTask(
+  qc: QueryClient,
+  payload: {
+    chat_session_id: string;
+    task_id: string;
+    created_at: string;
+    supports_queue?: boolean;
+  },
+) {
+  qc.setQueryData<ChatPendingTask>(
+    chatKeys.pendingTask(payload.chat_session_id),
+    (old) => {
+      const task = {
+        task_id: payload.task_id,
+        status: "queued",
+        created_at: payload.created_at,
+      };
+      const next =
+        old?.task_id?.startsWith("optimistic-")
+          ? {
+              ...old,
+              ...task,
+              status: old.status && old.status !== "queued" ? old.status : task.status,
+              created_at: old.created_at || task.created_at,
+            }
+          : enqueuePendingChatTask(old, task);
+      if (payload.supports_queue === true || old?.supports_queue === true) {
+        next.supports_queue = true;
+      }
+      return next;
+    },
+  );
+  invalidatePendingTask(qc, payload.chat_session_id);
 }
 
 // =====================================================
