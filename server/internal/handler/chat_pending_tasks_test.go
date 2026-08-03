@@ -191,11 +191,8 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list compatibility transcript: %v", err)
 	}
-	if len(transcript) != 3 ||
-		util.UUIDToString(transcript[0].TaskID) != activeID ||
-		util.UUIDToString(transcript[1].TaskID) != nextID ||
-		util.UUIDToString(transcript[2].TaskID) != laterID {
-		t.Fatalf("legacy transcript dropped queued prompts: %+v", transcript)
+	if len(transcript) != 1 || util.UUIDToString(transcript[0].TaskID) != activeID {
+		t.Fatalf("legacy full-list transcript exposed queued prompts: %+v", transcript)
 	}
 	page, err := testHandler.Queries.ListChatMessagesPage(
 		context.Background(),
