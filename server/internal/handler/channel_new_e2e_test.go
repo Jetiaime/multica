@@ -217,7 +217,10 @@ func runChannelNewCommandE2E(t *testing.T, channelType channel.Type, text, comma
 		t.Fatalf("created issues = %d, want 0; /new must be mutually exclusive with /issue", issueCount)
 	}
 
-	messages, err := queries.ListChatMessages(ctx, sessionID)
+	messages, err := queries.ListChatMessagesPage(ctx, db.ListChatMessagesPageParams{
+		ChatSessionID: sessionID,
+		Limit:         1,
+	})
 	if err != nil {
 		t.Fatalf("list persisted chat messages: %v", err)
 	}
