@@ -1217,7 +1217,7 @@ ORDER BY created_at ASC, id ASC
 // the user sent for this turn — and never absorbs a message that arrived after
 // the batch was sealed, no matter what the assistant wrote or when. Only used
 // for new task-owned direct-chat tasks; legacy/channel (chat_input_task_id
-// NULL) tasks keep using ListChatMessages + trailingUserMessages.
+// NULL) tasks keep using ListChatMessagesForLegacyTask + trailingUserMessages.
 func (q *Queries) ListChatInputMessages(ctx context.Context, taskID pgtype.UUID) ([]ChatMessage, error) {
 	rows, err := q.db.Query(ctx, listChatInputMessages, taskID)
 	if err != nil {
@@ -1259,6 +1259,57 @@ ORDER BY message.created_at ASC, message.id ASC
 
 func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUID) ([]ChatMessage, error) {
 	rows, err := q.db.Query(ctx, listChatMessages, chatSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatMessage{}
+	for rows.Next() {
+		var i ChatMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatSessionID,
+			&i.Role,
+			&i.Content,
+			&i.TaskID,
+			&i.CreatedAt,
+			&i.FailureReason,
+			&i.ElapsedMs,
+			&i.MessageKind,
+			&i.ChannelMediaPendingUntil,
+			&i.ChannelIngested,
+			&i.QuickActions,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatMessagesForLegacyTask = `-- name: ListChatMessagesForLegacyTask :many
+SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions FROM chat_message AS message
+WHERE message.chat_session_id = $1
+  AND NOT (
+    message.role = 'user'
+    AND EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.chat_session_id = message.chat_session_id
+        AND task.status = 'queued'
+        AND task.id = message.task_id
+    )
+  )
+ORDER BY message.created_at ASC, message.id ASC
+`
+
+// Legacy/reclaimed daemon tasks use trailing history, but must not absorb a
+// newer queued successor that is already bound to its own user message.
+func (q *Queries) ListChatMessagesForLegacyTask(ctx context.Context, chatSessionID pgtype.UUID) ([]ChatMessage, error) {
+	rows, err := q.db.Query(ctx, listChatMessagesForLegacyTask, chatSessionID)
 	if err != nil {
 		return nil, err
 	}
