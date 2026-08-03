@@ -45,7 +45,10 @@ import type {
   ChatMessage,
   ChatPendingTask,
 } from "@multica/core/types";
-import { removePendingChatTask } from "@multica/core/chat/pending";
+import {
+  hideQueuedChatMessages,
+  removePendingChatTask,
+} from "@multica/core/chat/pending";
 import { api } from "@/data/api";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
@@ -138,6 +141,7 @@ export default function ChatTab() {
   const { data: pendingTask } = useQuery(
     pendingChatTaskOptions(activeSessionId),
   );
+  const visibleMessages = hideQueuedChatMessages(messages, pendingTask);
   // Live execution trace for the in-flight task. `task:message` WS events
   // append rows to this same cache key via `appendTaskMessage`, so the
   // list/pill stay in sync without a polling fetch. `enabled` is gated by
@@ -428,7 +432,7 @@ export default function ChatTab() {
         className="flex-1"
       >
         <ChatMessageList
-          messages={messages}
+          messages={visibleMessages}
           loading={messagesLoading}
           hasSessions={sessions.length > 0}
           agentName={currentAgent?.name}
