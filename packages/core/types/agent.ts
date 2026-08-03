@@ -373,7 +373,16 @@ export interface AgentTask {
 export interface Agent {
   id: string;
   workspace_id: string;
+  /**
+   * Empty string when the agent is unbound: it kept its configuration, chats and
+   * task history when its runtime was deleted, and needs a new runtime before it
+   * can run again (MUL-5559). Use `isAgentRuntimeBound` so additive and legacy
+   * signals stay compatible, and do not confuse it with a bound-but-offline
+   * runtime — that one just needs the machine back.
+   */
   runtime_id: string;
+  /** False exactly when the agent has no runtime. Older backends omit it. */
+  runtime_bound?: boolean;
   name: string;
   description: string;
   instructions: string;

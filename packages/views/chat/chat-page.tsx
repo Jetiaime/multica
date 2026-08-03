@@ -33,6 +33,7 @@ import { useChatController } from "./components/use-chat-controller";
 import { OfflineBanner } from "./components/offline-banner";
 import { NoAgentBanner } from "./components/no-agent-banner";
 import { ArchivedAgentBanner } from "./components/archived-agent-banner";
+import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
 
 /**
  * Chat tab — the first-class two-pane surface (thread list on the left,
@@ -263,7 +264,11 @@ export function ChatPage() {
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
           onQuickAction={(action) => c.handleSend(action.prompt)}
           quickActionsDisabled={
-            !!c.pendingTaskId || c.isSessionArchived || c.isAgentArchived || c.noAgent
+            !!c.pendingTaskId ||
+            c.isSessionArchived ||
+            c.isAgentArchived ||
+            !c.isAgentRuntimeBound ||
+            c.noAgent
           }
           onRegenerateQuickActions={(message) =>
             c.activeSessionId
@@ -283,6 +288,11 @@ export function ChatPage() {
         <NoAgentBanner />
       ) : c.isAgentArchived ? (
         <ArchivedAgentBanner agentName={c.activeAgent?.name} />
+      ) : !c.isAgentRuntimeBound && c.activeAgent ? (
+        <RuntimeRequiredBanner
+          agentId={c.activeAgent.id}
+          agentName={c.activeAgent.name}
+        />
       ) : (
         <OfflineBanner agentName={c.activeAgent?.name} availability={c.availability} />
       )}
@@ -303,9 +313,12 @@ export function ChatPage() {
         onStop={c.handleStop}
         isRunning={!!c.pendingTaskId}
         allowSubmitWhileRunning={c.pendingTask?.supports_queue === true}
-        disabled={c.isSessionArchived || c.isAgentArchived}
+        disabled={
+          c.isSessionArchived || c.isAgentArchived || !c.isAgentRuntimeBound
+        }
         noAgent={c.noAgent}
         agentArchived={c.isAgentArchived}
+        agentRuntimeRequired={!c.isAgentRuntimeBound}
         agentName={c.activeAgent?.name}
         projects={c.projects}
         projectId={c.activeProjectId}
