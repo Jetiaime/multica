@@ -325,7 +325,7 @@ export default function ChatTab() {
     void api.cancelTaskById(pendingTask.task_id).catch(() => {
       // Silent — task may have already terminated server-side.
     });
-  }, [pendingTask?.task_id, activeSessionId, qc]);
+  }, [pendingTask?.task_id, pendingTask?.status, activeSessionId, qc]);
 
   // ── Header / sheet actions ─────────────────────────────────────────────
   const handleNewChat = useCallback(() => {
