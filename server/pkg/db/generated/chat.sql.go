@@ -1030,6 +1030,7 @@ type ListAgentBuilderSessionsByCreatorRow struct {
 // neither is also wrong: a session opened and abandoned untouched is not a
 // draft, and would put an empty row in front of the user on every accidental
 // entry into the flow.
+//
 // The stored draft rides along instead of needing its own fetch: the studio
 // renders this list beside the conversation it is switching between, so the
 // configuration for the row the user picks has to be in hand at click time.
@@ -1354,6 +1355,16 @@ func (q *Queries) ListChatMessagesForLegacyTask(ctx context.Context, chatSession
 const listChatMessagesPage = `-- name: ListChatMessagesPage :many
 SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions FROM chat_message AS message
 WHERE message.chat_session_id = $1
+  AND NOT (
+    message.role = 'user'
+    AND EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.chat_session_id = message.chat_session_id
+        AND task.status = 'queued'
+        AND task.id = message.task_id
+    )
+  )
   AND (
     $3::timestamptz IS NULL
     OR (message.created_at, message.id) < ($3::timestamptz, $4::uuid)

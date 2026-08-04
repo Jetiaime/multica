@@ -204,11 +204,8 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list paged compatibility transcript: %v", err)
 	}
-	if len(page) != 3 ||
-		util.UUIDToString(page[0].TaskID) != laterID ||
-		util.UUIDToString(page[1].TaskID) != nextID ||
-		util.UUIDToString(page[2].TaskID) != activeID {
-		t.Fatalf("paged transcript dropped queued prompts: %+v", page)
+	if len(page) != 1 || util.UUIDToString(page[0].TaskID) != activeID {
+		t.Fatalf("paged transcript exposed queued prompts: %+v", page)
 	}
 
 	legacy, err := testHandler.Queries.ListChatMessagesForLegacyTask(
@@ -323,6 +320,57 @@ func TestGetPendingChatTask_ReturnsActiveHeadAndFIFOQueue(t *testing.T) {
 		resp.QueuedTasks[0].TaskID != laterID ||
 		resp.QueuedTasks[1].TaskID != nextID {
 		t.Fatalf("all queued prompts must remain in the dedicated queue: %+v", resp)
+	}
+}
+
+func TestListChatMessagesPage_QueuedRowsDoNotConsumeLimit(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "QueuedPageBudgetAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	settledID := insertPendingChatTask(t, agentID, sessionID, "completed")
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id, created_at)
+		VALUES
+			($1, 'user', 'settled prompt', $2, '2026-07-29T01:00:00Z'),
+			($1, 'assistant', 'settled reply', $2, '2026-07-29T01:00:01Z')
+	`, sessionID, settledID); err != nil {
+		t.Fatalf("insert settled history: %v", err)
+	}
+
+	for _, row := range []struct {
+		content   string
+		createdAt string
+	}{
+		{"queued prompt A", "2026-07-29T01:00:02Z"},
+		{"queued prompt B", "2026-07-29T01:00:03Z"},
+		{"queued prompt C", "2026-07-29T01:00:04Z"},
+	} {
+		taskID := insertPendingChatTask(t, agentID, sessionID, "queued")
+		if _, err := testPool.Exec(ctx, `
+			WITH owned AS (
+				UPDATE agent_task_queue SET chat_input_task_id = id WHERE id = $1
+				RETURNING id
+			)
+			INSERT INTO chat_message (chat_session_id, role, content, task_id, created_at)
+			SELECT $2, 'user', $3, id, $4 FROM owned
+		`, taskID, sessionID, row.content, row.createdAt); err != nil {
+			t.Fatalf("insert queued history: %v", err)
+		}
+	}
+
+	page, err := testHandler.Queries.ListChatMessagesPage(ctx, db.ListChatMessagesPageParams{
+		ChatSessionID: util.MustParseUUID(sessionID),
+		Limit:         2,
+	})
+	if err != nil {
+		t.Fatalf("list paged compatibility transcript: %v", err)
+	}
+	if len(page) != 2 || page[0].Content != "settled reply" || page[1].Content != "settled prompt" {
+		t.Fatalf("queued prompts consumed the page budget: %+v", page)
 	}
 }
 
