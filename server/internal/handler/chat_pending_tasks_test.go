@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
@@ -335,8 +336,10 @@ func TestListChatMessagesPage_QueuedRowsDoNotConsumeLimit(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO chat_message (chat_session_id, role, content, task_id, created_at)
 		VALUES
-			($1, 'user', 'settled prompt', $2, '2026-07-29T01:00:00Z'),
-			($1, 'assistant', 'settled reply', $2, '2026-07-29T01:00:01Z')
+			($1, 'user', 'settled 1', $2, '2026-07-29T01:00:00Z'),
+			($1, 'assistant', 'settled 2', $2, '2026-07-29T01:00:01Z'),
+			($1, 'user', 'settled 3', $2, '2026-07-29T01:00:02Z'),
+			($1, 'assistant', 'settled 4', $2, '2026-07-29T01:00:03Z')
 	`, sessionID, settledID); err != nil {
 		t.Fatalf("insert settled history: %v", err)
 	}
@@ -345,9 +348,9 @@ func TestListChatMessagesPage_QueuedRowsDoNotConsumeLimit(t *testing.T) {
 		content   string
 		createdAt string
 	}{
-		{"queued prompt A", "2026-07-29T01:00:02Z"},
-		{"queued prompt B", "2026-07-29T01:00:03Z"},
-		{"queued prompt C", "2026-07-29T01:00:04Z"},
+		{"queued prompt A", "2026-07-29T01:00:04Z"},
+		{"queued prompt B", "2026-07-29T01:00:05Z"},
+		{"queued prompt C", "2026-07-29T01:00:06Z"},
 	} {
 		taskID := insertPendingChatTask(t, agentID, sessionID, "queued")
 		if _, err := testPool.Exec(ctx, `
@@ -362,16 +365,27 @@ func TestListChatMessagesPage_QueuedRowsDoNotConsumeLimit(t *testing.T) {
 		}
 	}
 
-	page, err := testHandler.Queries.ListChatMessagesPage(ctx, db.ListChatMessagesPageParams{
-		ChatSessionID: util.MustParseUUID(sessionID),
-		Limit:         2,
-	})
-	if err != nil {
-		t.Fatalf("list paged compatibility transcript: %v", err)
+	t.Log("PAGING FIXTURE: endpoint=GET /api/chat/sessions/{id}/messages/page settled=4 queued=3 limit=2")
+	t.Log("REQUEST page=1: limit=2 before=<none>")
+	page1 := fetchChatMessagesPageForTest(t, sessionID, url.Values{"limit": {"2"}})
+	if len(page1.Messages) != 2 || page1.Messages[0].Content != "settled 3" || page1.Messages[1].Content != "settled 4" || !page1.HasMore || page1.NextCursor == nil {
+		t.Fatalf("unexpected first page: %+v", page1)
 	}
-	if len(page) != 2 || page[0].Content != "settled reply" || page[1].Content != "settled prompt" {
-		t.Fatalf("queued prompts consumed the page budget: %+v", page)
+	t.Logf("RESPONSE page=1: messages=[%q, %q] has_more=%t", page1.Messages[0].Content, page1.Messages[1].Content, page1.HasMore)
+	t.Logf("CURSOR page=1: created_at=%s id=%s", page1.NextCursor.CreatedAt, page1.NextCursor.ID)
+
+	page2Params := url.Values{
+		"limit":             {"2"},
+		"before_created_at": {page1.NextCursor.CreatedAt},
+		"before_id":         {page1.NextCursor.ID},
 	}
+	t.Logf("REQUEST page=2: limit=2 before_created_at=%s before_id=%s", page1.NextCursor.CreatedAt, page1.NextCursor.ID)
+	page2 := fetchChatMessagesPageForTest(t, sessionID, page2Params)
+	if len(page2.Messages) != 2 || page2.Messages[0].Content != "settled 1" || page2.Messages[1].Content != "settled 2" || page2.HasMore || page2.NextCursor != nil {
+		t.Fatalf("unexpected second page: %+v", page2)
+	}
+	t.Logf("RESPONSE page=2: messages=[%q, %q] has_more=%t next_cursor=<nil>", page2.Messages[0].Content, page2.Messages[1].Content, page2.HasMore)
+	t.Log("ASSERTION: page_sizes=2,2 queued_visible=0 cursor_advanced=true duplicates=0")
 }
 
 func TestPendingQueueHeadMatchesClaimForEqualCreatedAt(t *testing.T) {
